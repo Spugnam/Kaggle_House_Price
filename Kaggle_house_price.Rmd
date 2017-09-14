@@ -1,0 +1,263 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+getwd()
+```
+
+```{r}
+source("House_price_functions.R") # functions definitions
+
+library(Amelia) # for missmap (NAs)
+library(randomForest)
+```
+
+```{r}
+# Import train and test data
+house.train = read.csv("train.csv", stringsAsFactors = TRUE, na.strings = c("NA", "")) # create factors
+house.test = read.csv("test.csv", stringsAsFactors = TRUE, na.strings = c("NA", ""))
+house.test$SalePrice <- 0
+attach(house.train)
+colnames(house.train)
+```
+
+```{r}
+# Visualize data
+dim(house.train)
+dim(house.test) # SalePrice column to predict
+#View(house.train)
+```
+
+```{r}
+# Data Exploration
+# NAs
+missmap(house.train, legend = TRUE, col = c("yellow","black"), main = "House Price Missing Data Map",)
+# missing values: PoolQC, MiscFeature, Alley, Fence, FirePlaceQu, LotFrontage...
+```
+
+```{r}
+#summary(house.train) # output too long
+```
+
+```{r}
+# Check the type of features
+#lapply(house.train, class) # output too long
+```
+
+```{r}
+# Find NAs - count and percentage for each feature
+NA.analysis(house.train) # see function definition in House_price_functions.R
+```
+
+```{r}
+# Data clean
+# Analysis of GarageType missing values
+# house.train$GarageType <- as.factor(house.train$GarageType)
+# summary(house.train$GarageType)
+# house.train$GarageType[which(is.na(house.train$GarageType))] <- "Attchd" # replace with most common value
+# summary(house.train$GarageType)
+```
+
+```{r}
+# Analysis of GarageFinish missing values
+# house.train$GarageFinish <- as.factor(house.train$GarageFinish)
+# summary(house.train$GarageFinish)
+# house.train$GarageFinish[which(is.na(house.train$GarageFinish))] <- "Unf" # replace with most common value
+# summary(house.train$GarageFinish)
+```
+
+```{r}
+# Study of missing Garage data (show levels for relevant rows and columns)
+no.garage.81rows <- house.train[is.na(house.train$GarageType),] # subset to 81 rows with NA's
+no.garage.81rows <- droplevels(no.garage.81rows) # CAUTION: needed as levels not dropped after subset
+
+garage.subset <- no.garage.81rows[,grep("Garage", names(no.garage.81rows))] # filter to Garage* columns
+sapply(garage.subset, levels) # show levels
+# Conclusion: Missing garage data seems to be limited to those 81 records
+```
+
+```{r}
+# Display NA's without the 81 'Garage' rows
+NA.analysis(house.train[!is.na(house.train$GarageType),]) 
+```
+
+```{r}
+# TO DO - Address remaining NA's
+```
+
+```{r}
+
+```
+
+```{r}
+# Data Visualization - Price distribution table - Move to separate file?
+summary(house.train$SalePrice)
+plot(sort(house.train$SalePrice))
+hist(sort(house.train$SalePrice), breaks = 50)
+```
+
+```{r}
+# Columns selection (by name)
+# paste(na.columns, collapse=", ") 
+# 
+# 
+# house.train.rm.na.col = subset(house.train,
+#                                select=-c(Id, LotFrontage, Alley, MasVnrType, MasVnrArea, BsmtQual, BsmtCond, BsmtExposure, BsmtFinType1, BsmtFinType2, Electrical, FireplaceQu, GarageType, GarageYrBlt, GarageFinish, GarageQual, GarageCond, PoolQC, Fence, MiscFeature))
+# 
+# dim(house.train.rm.na.col)
+# na.columns
+```
+
+```{r}
+# Removing rows with NA's - commented out for now as handled through columns
+#house.train.rm.na.col.complete.cases = house.train.rm.na.col[complete.cases(house.train.rm.na.col),] 
+#View(house.train.rm.na.col.complete.cases)
+```
+
+```{r}
+# Formula and subset preparation
+
+# Columns with NA's
+na.columns <- rownames(NA.analysis(house.train[,]) ) # Removing all columns with NA's
+na.columns
+
+# Formula
+form <- paste("SalePrice ~. -Id -", paste(na.columns, collapse="-")) # also removing Id (no value)
+form <- as.formula(form)
+form
+
+#Selection
+paste(na.columns, collapse=", ")
+house.train.rm.na.col = subset(house.train,
+                               select=-c(Id, PoolQC, MiscFeature, Alley, Fence, FireplaceQu, LotFrontage, GarageType, GarageYrBlt, GarageFinish, GarageQual, GarageCond, BsmtExposure, BsmtFinType2, BsmtQual, BsmtCond, BsmtFinType1, MasVnrType, MasVnrArea, Electrical)) #copied from previous result + adding Id
+
+# Also prepping test set
+house.test.rm.na.col = subset(house.test,
+                               select=-c(Id, PoolQC, MiscFeature, Alley, Fence, FireplaceQu, LotFrontage, GarageType, GarageYrBlt, GarageFinish, GarageQual, GarageCond, BsmtExposure, BsmtFinType2, BsmtQual, BsmtCond, BsmtFinType1, MasVnrType, MasVnrArea, Electrical))
+
+```
+
+```{r}
+# Random Forest / choose optimal mtry with cross validation (for loop or built-in?)
+
+train.train = sample(1:nrow(house.train), nrow(house.train)/2) # indices of train subset (of the house.train dataframe)
+
+colnames(house.train.rm.na.col)
+
+# Test with columns with NAs removed
+# rf.house=randomForest(SalePrice ~ MSSubClass + MSZoning + LotArea + Street + LotShape + LandContour + Utilities + LotConfig + LandSlope + Neighborhood + Condition1 + Condition2 + BldgType + HouseStyle + OverallQual + OverallCond + YearBuilt + YearRemodAdd + RoofStyle + RoofMatl + Exterior1st + Exterior2nd + ExterQual + ExterCond + Foundation + BsmtFinSF1 + BsmtFinSF2 + BsmtUnfSF + TotalBsmtSF + Heating + HeatingQC + CentralAir + X1stFlrSF + X2ndFlrSF + LowQualFinSF + GrLivArea + BsmtFullBath + BsmtHalfBath + FullBath + HalfBath + BedroomAbvGr + KitchenAbvGr + KitchenQual + TotRmsAbvGrd + Functional + Fireplaces + GarageCars + GarageArea + PavedDrive + WoodDeckSF + OpenPorchSF + EnclosedPorch + X3SsnPorch + ScreenPorch + PoolArea + MiscVal + MoSold + YrSold + SaleType + SaleCondition,
+#                       data=house.train.rm.na.col,
+#                       subset=train.train,
+#                       mtry=1, # sqrt(81) = 9
+#                       importance=TRUE,
+#                       na.action = na.exclude)
+
+rf.house=randomForest(SalePrice ~ .,
+                      data=house.train.rm.na.col,
+                      subset=train.train,
+                      mtry=9, # sqrt(81) = 9
+                      importance=TRUE,
+                      na.action = na.exclude)
+```
+
+```{r}
+# When character instead of factor 
+#Error in randomForest.default(m, y, ...) : NA/NaN/Inf in foreign function call (arg 1)
+```
+
+```{r}
+sapply(house.train.rm.na.col, class)
+```
+
+```{r}
+rf.house
+```
+
+```{r}
+# Prediction
+house.train.rm.na.col.set <- house.train.rm.na.col[-train.train,]
+
+yhat.rf = predict(rf.house,newdata=house.train.rm.na.col.set)
+plot(yhat.rf, newdata=house.train.rm.na.col.set)
+mean((yhat.rf-house.train.rm.na.col.set[,c("SalePrice")])^2) # test set MSE half of bagged regression trees
+mean(abs(yhat.rf-house.train.rm.na.col.set[,c("SalePrice")])) # average price diff
+
+```
+
+```{r}
+# average price diff as a percentage of average house price
+100*mean(abs(yhat.rf-house.train.rm.na.col.set[,c("SalePrice")]))/mean(house.train.rm.na.col.set[,c("SalePrice")]) # 21% difference
+```
+
+```{r}
+# Show variables by decreasing importance (% IncMSE)
+importance(rf.house.full.training)[order(desc(importance(rf.house.full.training)[,"%IncMSE"])),]
+```
+
+
+```{r}
+varImpPlot(rf.house.full.training)
+```
+
+```{r}
+# Random Forest / choose optimal mtry with cross validation (for loop or built-in?)
+
+```
+
+```{r}
+# Linear Models
+#lm(SalePrice ~ as.factor(house.train$Neighborhood), data=house.train,importance=TRUE, na.action = na.exclude)
+```
+
+```{r}
+# TO DO try a GAM
+```
+
+```{r}
+# Levels of test set not same as training throwing "type of predictors in new data do not match". 
+#The below "trick" equalizes the levels:
+house.test.rm.na.col <- rbind(house.train.rm.na.col[1, ] , house.test.rm.na.col)
+house.test.rm.na.col <- house.test.rm.na.col[-1,]
+
+# Prediction on train.set with mtry = 9
+rf.house.full.training=randomForest(SalePrice ~ .,
+                      data=house.train.rm.na.col,
+                      #subset=train.train,
+                      mtry=9, # sqrt(81) = 9
+                      importance=TRUE,
+                      na.action = na.exclude)
+
+rf.house.full.training
+
+# Prediction
+yhat.rf.test = predict(rf.house.full.training,
+                       newdata=house.test.rm.na.col)
+plot(yhat.rf.test, newdata=house.test.rm.na.col)
+
+house.test$SalePrice <- yhat.rf.test
+#
+```
+
+```{r}
+# Results analysis
+summary(house.test$SalePrice)
+# 12 NA's to analyze. For now replace with mean
+house.test[is.na(house.test$SalePrice),"SalePrice"] <- mean(house.test$SalePrice, ,na.rm=TRUE)
+
+```
+
+```{r}
+mean(house.train$SalePrice)
+mean(house.test$SalePrice, ,na.rm=TRUE)
+```
+
+```{r}
+NA.analysis(house.test.rm.na.col)
+```
+
+```{r}
+write.csv(house.test[c("Id","SalePrice")],"house_submission.csv", row.names = FALSE)
+```
+
+
