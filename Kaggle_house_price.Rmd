@@ -10,34 +10,49 @@ getwd()
 source("House_price_functions.R") # functions definitions
 
 library(Amelia) # for missmap (NAs)
+library(dplyr)
 library(randomForest)
+library(gbm)
 ```
 
 ```{r}
 # Import train and test data
 house.train = read.csv("train.csv", stringsAsFactors = TRUE, na.strings = c("NA", "")) # create factors
 house.test = read.csv("test.csv", stringsAsFactors = TRUE, na.strings = c("NA", ""))
-house.test$SalePrice <- 0
-attach(house.train)
-colnames(house.train)
+house.test$SalePrice <- 0 # so train and test data.frames have same dim from the start
+# attach(house.train)
 ```
 
 ```{r}
-# Visualize data
+# Merge train and test for data cleanup
+house.merged = rbind(house.train, house.test) 
+```
+
+```{r}
+# Dimensions
 dim(house.train)
-dim(house.test) # SalePrice column to predict
-#View(house.train)
+dim(house.test)
+dim(house.merged)
 ```
 
 ```{r}
 # Data Exploration
 # NAs
-missmap(house.train, legend = TRUE, col = c("yellow","black"), main = "House Price Missing Data Map",)
+missmap(house.merged, legend = TRUE, col = c("yellow","black"), main = "House Price Missing Data Map",)
 # missing values: PoolQC, MiscFeature, Alley, Fence, FirePlaceQu, LotFrontage...
 ```
 
 ```{r}
+# Other NA's representation
+image(is.na(house.merged), main = "Missing Values", xlab = "Observation", ylab = "Variable", 
+    xaxt = "n", yaxt = "n", bty = "n")
+axis(1, seq(0, 1, length.out = nrow(house.train)), 1:nrow(house.train), col = "white")
+axis(2, seq(0, 1, length.out = ncol(house.train)), names(house.train), col = "white", las = 2)
+```
+
+```{r}
 #summary(house.train) # output too long
+str(house.train) # better
 ```
 
 ```{r}
@@ -47,28 +62,11 @@ missmap(house.train, legend = TRUE, col = c("yellow","black"), main = "House Pri
 
 ```{r}
 # Find NAs - count and percentage for each feature
-NA.analysis(house.train) # see function definition in House_price_functions.R
+NA.analysis(house.merged) # see function definition in House_price_functions.R
 ```
 
 ```{r}
-# Data clean
-# Analysis of GarageType missing values
-# house.train$GarageType <- as.factor(house.train$GarageType)
-# summary(house.train$GarageType)
-# house.train$GarageType[which(is.na(house.train$GarageType))] <- "Attchd" # replace with most common value
-# summary(house.train$GarageType)
-```
-
-```{r}
-# Analysis of GarageFinish missing values
-# house.train$GarageFinish <- as.factor(house.train$GarageFinish)
-# summary(house.train$GarageFinish)
-# house.train$GarageFinish[which(is.na(house.train$GarageFinish))] <- "Unf" # replace with most common value
-# summary(house.train$GarageFinish)
-```
-
-```{r}
-# Study of missing Garage data (show levels for relevant rows and columns)
+# Study of missing Garage data in training set: show levels for relevant rows and columns
 no.garage.81rows <- house.train[is.na(house.train$GarageType),] # subset to 81 rows with NA's
 no.garage.81rows <- droplevels(no.garage.81rows) # CAUTION: needed as levels not dropped after subset
 
@@ -76,25 +74,94 @@ garage.subset <- no.garage.81rows[,grep("Garage", names(no.garage.81rows))] # fi
 sapply(garage.subset, levels) # show levels
 # Conclusion: Missing garage data seems to be limited to those 81 records
 ```
-
 ```{r}
-# Display NA's without the 81 'Garage' rows
-NA.analysis(house.train[!is.na(house.train$GarageType),]) 
+# Replacing NA's in Garage* columns
+
+# GarageType/ GarageFinish/ GarageQual/ GarageCond
+# Replace NA's with most common value
+house.merged$GarageType <- replace.NA.most.frequent.value(house.merged, "GarageType")
+house.merged$GarageFinish <- replace.NA.most.frequent.value(house.merged, "GarageFinish")
+house.merged$GarageQual <- replace.NA.most.frequent.value(house.merged, "GarageQual")
+house.merged$GarageCond <- replace.NA.most.frequent.value(house.merged, "GarageCond")
+house.merged$Electrical <- replace.NA.most.frequent.value(house.merged, "Electrical")
+house.merged$KitchenQual <- replace.NA.most.frequent.value(house.merged, "KitchenQual")
+
+# GarageYrBlt
+# Replacing NA with year the house was built or remodelled (latest) - Used dplyr and pmax
+house.merged <- dplyr::mutate(house.merged, GarageYrBlt = ifelse(is.na(GarageYrBlt), pmax(YearBuilt, YearRemodAdd), GarageYrBlt))
+
+# LotFrontage/ BsmtFinSF1
+# Replacing with median 
+house.merged <- dplyr::mutate(house.merged, LotFrontage = ifelse(is.na(LotFrontage), median(LotFrontage, na.rm = TRUE), LotFrontage))
+house.merged <- dplyr::mutate(house.merged, BsmtFinSF1 = ifelse(is.na(BsmtFinSF1), median(BsmtFinSF1 ), BsmtFinSF1))
+house.merged <- dplyr::mutate(house.merged, BsmtFinSF2 = ifelse(is.na(BsmtFinSF2), median(BsmtFinSF2, na.rm = TRUE), BsmtFinSF2))
+
+
+#Replace NA's corresponding description
+house.merged$PoolQC <- replace.NA.value(house.merged, "PoolQC", "No Pool")
+house.merged$MiscFeature <- replace.NA.value(house.merged, "MiscFeature", "No MiscFeature")
+house.merged$Alley <- replace.NA.value(house.merged, "Alley", "No alley access")
+house.merged$Fence <- replace.NA.value(house.merged, "Fence", "No Fence")
+house.merged$FireplaceQu <- replace.NA.value(house.merged, "FireplaceQu", "No Fireplace")
+house.merged$BsmtCond <- replace.NA.value(house.merged, "BsmtCond", "No Basement")
+house.merged$BsmtExposure <- replace.NA.value(house.merged, "BsmtExposure", "No Basement")
+house.merged$BsmtQual <- replace.NA.value(house.merged, "BsmtQual", "No Basement")
+house.merged$BsmtFinType2 <- replace.NA.value(house.merged, "BsmtFinType2", "No Basement")
+house.merged$BsmtFinType1 <- replace.NA.value(house.merged, "BsmtFinType1", "No Basement")
+house.merged$MasVnrType <- replace.NA.value(house.merged, "MasVnrType", "None")
+house.merged$MasVnrArea <- replace.NA.value(house.merged, "MasVnrArea", 0)
+house.merged$MSZoning <- replace.NA.value(house.merged, "MSZoning", "RL")
+house.merged$Utilities <- replace.NA.value(house.merged, "Utilities", "AllPub")
+house.merged$BsmtFullBath <- replace.NA.value(house.merged, "BsmtFullBath", 0)
+house.merged$BsmtHalfBath <- replace.NA.value(house.merged, "BsmtHalfBath", 0)
+house.merged$Functional <- replace.NA.value(house.merged, "Functional", "Typ")
+house.merged$Exterior1st <- replace.NA.value(house.merged, "Exterior1st", "other") # other not used anywhere else
+house.merged$Exterior2nd <- replace.NA.value(house.merged, "Exterior2nd", "other2") #create new level not used
+house.merged$BsmtUnfSF <- replace.NA.value(house.merged, "BsmtUnfSF", 0) #record with no basement info
+house.merged$BsmtFinSF1 <- replace.NA.value(house.merged, "BsmtFinSF1", 0) #record with no basement info
+house.merged$TotalBsmtSF <- replace.NA.value(house.merged, "TotalBsmtSF", 0) #record with no basement info
+house.merged$GarageCars <- replace.NA.value(house.merged, "GarageCars", 2) #record says 'detached' garage
+house.merged$GarageArea <- replace.NA.value(house.merged, "GarageArea", median(house.merged$GarageArea, na.rm = TRUE)) #record says 'detached' garage
+house.merged$SaleType <- replace.NA.value(house.merged, "SaleType", "other2")
 ```
 
 ```{r}
-# TO DO - Address remaining NA's
+table(house.merged$GarageCars, exclude=NULL)
+summary(house.merged$GarageArea) 
 ```
 
 ```{r}
+# Check results
+NA.analysis(house.merged) 
+```
+
+```{r}
+# FEATURE ENGINEERING
+# Changing YearBuilt into HouseAge
+house.merged <- generate.HouseAgeNewFeature(house.merged)
+```
+
+```{r}
+# Create RemodNewFeature
+house.merged <- generate.RemodNewFeature(house.merged)
+```
+
+```{r}
+# Combine rating (quality) and surface for basement, floors (and feature type/ value)
+house.merged <- generate.NewAreaFeature(house.merged, "BsmtFinType1", "BsmtFinSF1", "BsmtFinRating1NewFeature")
+house.merged <- generate.NewAreaFeature(house.merged, "BsmtFinType2", "BsmtFinSF2", "BsmtFinRating2NewFeature")
+house.merged <- generate.NewAreaFeature(house.merged, "BsmtCond", "TotalBsmtSF", "TotalBsmtRatingNewFeature")
+house.merged <- generate.NewAreaFeature(house.merged, "GarageQual", "GarageArea", "GarageRatingNewFeature")
+house.merged <- generate.NewAreaFeature(house.merged, "PoolQC", "PoolArea", "PoolNewFeature")
+house.merged <- generate.NewAreaFeature(house.merged, "MiscFeature", "MiscVal", "MiscFeatureValNewFeature")
 
 ```
 
 ```{r}
 # Data Visualization - Price distribution table - Move to separate file?
-summary(house.train$SalePrice)
-plot(sort(house.train$SalePrice))
-hist(sort(house.train$SalePrice), breaks = 50)
+# summary(house.train$SalePrice)
+# plot(sort(house.train$SalePrice))
+# hist(sort(house.train$SalePrice), breaks = 50)
 ```
 
 ```{r}
@@ -116,26 +183,28 @@ hist(sort(house.train$SalePrice), breaks = 50)
 ```
 
 ```{r}
+house.train = house.merged[1:1460, ]
+house.test = house.merged[1461:dim(house.merged)[1],]
+```
+
+```{r}
 # Formula and subset preparation
 
-# Columns with NA's
-na.columns <- rownames(NA.analysis(house.train[,]) ) # Removing all columns with NA's
+# Select columns without NA's
+na.columns <- rownames(NA.analysis(house.train) ) 
 na.columns
 
 # Formula
-form <- paste("SalePrice ~. -Id -", paste(na.columns, collapse="-")) # also removing Id (no value)
-form <- as.formula(form)
-form
+#form <- as.formula(paste("SalePrice ~. -Id -", paste(na.columns, collapse="-"))) # also removing Id (no value)
 
-#Selection
-paste(na.columns, collapse=", ")
+# Remove NA from training and test sets
+`%ni%` <- Negate(`%in%`) # custom bineary operator
 house.train.rm.na.col = subset(house.train,
-                               select=-c(Id, PoolQC, MiscFeature, Alley, Fence, FireplaceQu, LotFrontage, GarageType, GarageYrBlt, GarageFinish, GarageQual, GarageCond, BsmtExposure, BsmtFinType2, BsmtQual, BsmtCond, BsmtFinType1, MasVnrType, MasVnrArea, Electrical)) #copied from previous result + adding Id
-
-# Also prepping test set
+                               select=names(house.train) %ni% na.columns) 
 house.test.rm.na.col = subset(house.test,
-                               select=-c(Id, PoolQC, MiscFeature, Alley, Fence, FireplaceQu, LotFrontage, GarageType, GarageYrBlt, GarageFinish, GarageQual, GarageCond, BsmtExposure, BsmtFinType2, BsmtQual, BsmtCond, BsmtFinType1, MasVnrType, MasVnrArea, Electrical))
-
+                              select=names(house.train) %ni% na.columns)
+dim(house.train.rm.na.col)
+dim(house.test.rm.na.col)
 ```
 
 ```{r}
@@ -143,17 +212,10 @@ house.test.rm.na.col = subset(house.test,
 
 train.train = sample(1:nrow(house.train), nrow(house.train)/2) # indices of train subset (of the house.train dataframe)
 
-colnames(house.train.rm.na.col)
+house.train.rm.na.col.train <- house.train.rm.na.col[train.train,]
+house.train.rm.na.col.set <- house.train.rm.na.col[-train.train,]
 
-# Test with columns with NAs removed
-# rf.house=randomForest(SalePrice ~ MSSubClass + MSZoning + LotArea + Street + LotShape + LandContour + Utilities + LotConfig + LandSlope + Neighborhood + Condition1 + Condition2 + BldgType + HouseStyle + OverallQual + OverallCond + YearBuilt + YearRemodAdd + RoofStyle + RoofMatl + Exterior1st + Exterior2nd + ExterQual + ExterCond + Foundation + BsmtFinSF1 + BsmtFinSF2 + BsmtUnfSF + TotalBsmtSF + Heating + HeatingQC + CentralAir + X1stFlrSF + X2ndFlrSF + LowQualFinSF + GrLivArea + BsmtFullBath + BsmtHalfBath + FullBath + HalfBath + BedroomAbvGr + KitchenAbvGr + KitchenQual + TotRmsAbvGrd + Functional + Fireplaces + GarageCars + GarageArea + PavedDrive + WoodDeckSF + OpenPorchSF + EnclosedPorch + X3SsnPorch + ScreenPorch + PoolArea + MiscVal + MoSold + YrSold + SaleType + SaleCondition,
-#                       data=house.train.rm.na.col,
-#                       subset=train.train,
-#                       mtry=1, # sqrt(81) = 9
-#                       importance=TRUE,
-#                       na.action = na.exclude)
-
-rf.house=randomForest(SalePrice ~ .,
+rf.house=randomForest(SalePrice ~ .-YearBuilt, 
                       data=house.train.rm.na.col,
                       subset=train.train,
                       mtry=9, # sqrt(81) = 9
@@ -167,37 +229,29 @@ rf.house=randomForest(SalePrice ~ .,
 ```
 
 ```{r}
-sapply(house.train.rm.na.col, class)
-```
-
-```{r}
 rf.house
+```
+```{r}
+# Show variables by decreasing importance (% IncMSE)
+importance(rf.house)[order(desc(importance(rf.house)[,"%IncMSE"])),]
 ```
 
 ```{r}
 # Prediction
-house.train.rm.na.col.set <- house.train.rm.na.col[-train.train,]
-
 yhat.rf = predict(rf.house,newdata=house.train.rm.na.col.set)
 plot(yhat.rf, newdata=house.train.rm.na.col.set)
 mean((yhat.rf-house.train.rm.na.col.set[,c("SalePrice")])^2) # test set MSE half of bagged regression trees
 mean(abs(yhat.rf-house.train.rm.na.col.set[,c("SalePrice")])) # average price diff
-
 ```
 
 ```{r}
 # average price diff as a percentage of average house price
-100*mean(abs(yhat.rf-house.train.rm.na.col.set[,c("SalePrice")]))/mean(house.train.rm.na.col.set[,c("SalePrice")]) # 21% difference
+100*mean(abs(yhat.rf-house.train.rm.na.col.set[,c("SalePrice")]))/mean(house.train.rm.na.col.set[,c("SalePrice")]) 
 ```
 
 ```{r}
-# Show variables by decreasing importance (% IncMSE)
-importance(rf.house.full.training)[order(desc(importance(rf.house.full.training)[,"%IncMSE"])),]
-```
-
-
-```{r}
-varImpPlot(rf.house.full.training)
+# Root Mean Squared Logarithmic Error
+sqrt(mean((log(yhat.rf)-log(house.train.rm.na.col.set[,c("SalePrice")]))^2))
 ```
 
 ```{r}
@@ -240,6 +294,15 @@ house.test$SalePrice <- yhat.rf.test
 ```
 
 ```{r}
+# Show variables by decreasing importance (% IncMSE)
+importance(rf.house.full.training)[order(desc(importance(rf.house.full.training)[,"%IncMSE"])),]
+```
+
+```{r}
+varImpPlot(rf.house.full.training)
+```
+
+```{r}
 # Results analysis
 summary(house.test$SalePrice)
 # 12 NA's to analyze. For now replace with mean
@@ -254,10 +317,31 @@ mean(house.test$SalePrice, ,na.rm=TRUE)
 
 ```{r}
 NA.analysis(house.test.rm.na.col)
+sapply(house.merged, function(x) sum(is.na(x)))
+house.merged[is.na(house.merged$SaleType),]
+summary(SaleType)
 ```
 
 ```{r}
-write.csv(house.test[c("Id","SalePrice")],"house_submission.csv", row.names = FALSE)
+# Boosting
+# boost.house=gbm(SalePrice~.-YearBuilt,
+#                 data=house.train.rm.na.col,
+#                 distribution="gaussian",
+#                 n.trees=5000,
+#                 interaction.depth=4)
+# 
+# summary(boost.house)
+# 
+# # Prediction
+# yhat.boost=predict(boost.house,
+#                    newdata=house.test.rm.na.col,
+#                    n.trees=5000)
+# 
+# house.test$SalePrice <- yhat.boost
+```
+
+```{r}
+write.csv(house.test[c("Id","SalePrice")], paste(format(Sys.time(),'%Y-%m-%d %H-%M-%S'), "house_submission.csv"), row.names = FALSE)
 ```
 
 
